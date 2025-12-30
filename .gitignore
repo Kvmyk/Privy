@@ -31,3 +31,5 @@ apt-repo/
 logs/
 *.log
 tmp/
+
+GEMINI.md
