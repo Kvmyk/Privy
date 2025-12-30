@@ -6,6 +6,7 @@
 
 - **Natural Language Commands**: Ask for tasks in English (e.g., "Find all large files in /var").
 - **System Dashboard**: View CPU, Memory, and Disk usage with `privy-status`.
+- **PrivyPM**: Install packages and automatically generate cheat sheets with `privypm <package>`.
 - **RAG Support**: Searches local documentation to provide context-aware answers.
 - **Privacy Focused**: Runs entirely locally using Ollama.
 
@@ -34,3 +35,4 @@ Inside Privy:
 - Type standard shell commands (`ls`, `cd`, `grep`...) normally.
 - Type questions or requests for the AI.
 - Use `privy-status` to see the dashboard.
+- Use `privypm <package>` to install a tool and get a cheat sheet (e.g., `privypm htop`).
