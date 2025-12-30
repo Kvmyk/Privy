@@ -273,7 +273,7 @@ def main():
     print_banner()
 
     ai_enabled = check_ollama_ready()
-    NATIVE_COMMANDS = ['ls', 'cd', 'pwd', 'cat', 'grep', 'cp', 'mv', 'rm', 'mkdir', 'touch', 'clear', 'exit']
+    NATIVE_COMMANDS = ['ls', 'cd', 'pwd', 'cat', 'grep', 'cp', 'mv', 'rm', 'mkdir', 'touch', 'clear', 'exit', 'privypm']
     history = []
 
     while True:

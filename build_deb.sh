@@ -24,10 +24,22 @@ fi
 
 # 2. Build Binary
 echo "Compiling Python source to standalone binary..."
+
+# Create a temporary entry point to ensure package resolution works correctly
+echo "from privy.main import main; main()" > build_entry.py
+
 # --onefile: Create a single executable
 # --name: Output name
 # --clean: Clean cache
-pyinstaller --clean --onefile --name privy privy/main.py
+pyinstaller --clean --onefile --name privy build_entry.py
+
+# Build privypm binary
+echo "Compiling PrivyPM to standalone binary..."
+echo "from privy.pm import main; main()" > build_pm_entry.py
+pyinstaller --clean --onefile --name privypm build_pm_entry.py
+
+# Cleanup
+rm build_entry.py build_pm_entry.py
 
 # 3. Prepare Package Structure
 echo "Preparing package structure in ${BUILD_DIR}..."
@@ -38,7 +50,9 @@ mkdir -p "${BUILD_DIR}/usr/share/doc/${PKG_NAME}"
 # 4. Copy Files
 echo "Copying files..."
 cp dist/privy "${BUILD_DIR}/usr/local/bin/"
+cp dist/privypm "${BUILD_DIR}/usr/local/bin/"
 chmod 755 "${BUILD_DIR}/usr/local/bin/privy"
+chmod 755 "${BUILD_DIR}/usr/local/bin/privypm"
 
 # Copy control file from local project to temp build dir
 cp debian-build/${FULL_NAME}/DEBIAN/control "${BUILD_DIR}/DEBIAN/control"
