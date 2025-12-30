@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "privy"
+version = "1.4.0"
+description = "Local AI Terminal Assistant Wrapper"
+readme = "README.md"
+authors = [
+  { name = "Privy Contributors" },
+]
+license = { file = "LICENSE" }
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "rich",
+    "psutil",
+    "requests",
+]
+requires-python = ">=3.8"
+
+[project.scripts]
+privy = "privy.main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["privy*"]

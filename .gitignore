@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.env
+.venv/
+
+# PyInstaller / Executables
+build/
+dist/
+*.spec
+privy_bin/
+
+# Debian Build Artifacts
+debian-build/
+*.deb
+apt-repo/
+
+# OS / Editors
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Project specific
+logs/
+*.log
+tmp/
