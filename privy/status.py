@@ -16,7 +16,7 @@ from rich.text import Text
 from rich import box
 
 # Initialize console instance
-console = Console()
+console = Console(force_terminal=True)
 
 def get_cpu_info() -> str:
     """Returns the current CPU usage percentage."""

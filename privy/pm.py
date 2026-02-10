@@ -14,7 +14,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.markdown import Markdown
 
-console = Console()
+console = Console(force_terminal=True)
 MODEL = "qwen2.5-coder:1.5b"
 
 def get_cheat_sheet(pkg):

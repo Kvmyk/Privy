@@ -31,13 +31,14 @@ try:
     from rich.panel import Panel
     from rich.style import Style
     from rich.text import Text
-    console = Console()
+    console = Console(force_terminal=True)
     HAS_RICH = True
 except ImportError:
     HAS_RICH = False
 
 # Configuration
 MODEL = "qwen2.5-coder:1.5b"
+EMBEDDING_MODEL = "nomic-embed-text"
 OLLAMA_API = "http://localhost:11434/api/generate"
 OLLAMA_CHECK = "http://localhost:11434/api/tags"
 HISTORY_LIMIT = 5
@@ -83,9 +84,17 @@ def check_ollama_ready() -> bool:
             r = requests.get(OLLAMA_CHECK)
             if r.status_code == 200:
                 models = [m['name'] for m in r.json()['models']]
+                
+                # Check Main Model
                 if MODEL not in models and f"{MODEL}:latest" not in models:
                     print_styled(f"[System] Model {MODEL} nie znaleziony. Pobieranie...", "red")
                     subprocess.run(f"ollama pull {MODEL}", shell=True)
+                
+                # Check Embedding Model
+                if EMBEDDING_MODEL not in models and f"{EMBEDDING_MODEL}:latest" not in models:
+                    print_styled(f"[System] Model embeddingów {EMBEDDING_MODEL} nie znaleziony. Pobieranie...", "red")
+                    subprocess.run(f"ollama pull {EMBEDDING_MODEL}", shell=True)
+                    
                 return True
         except:
             time.sleep(2)
@@ -142,7 +151,7 @@ def process_ai_interaction(user_query: str, history: list) -> dict:
 
     # Base System Prompts
     if intent == "coder":
-        system_instruction = f"You are a Coding Assistant. Generate BASH commands to CREATE files using 'cat << EOF'.\n{local_context}\nOUTPUT ONLY THE BASH COMMAND. No explanations."
+        system_instruction = f"You are a Coding Assistant. First explain what you are going to do, then generate BASH commands to CREATE files using 'cat << EOF' inside a markdown code block (```bash ... ```).\n{local_context}"
     else:
         system_instruction = f"""
 You are Privy System Assistant.
@@ -154,8 +163,8 @@ You are Privy System Assistant.
            - IMPORTANT: After receiving "TOOL OUTPUT", you MUST provide a human-readable summary. DO NOT loop unless the previous command failed.
 
         2. **ACTION** (User asks "Create...", "Delete...", "Move...", "Install..."):
-           - Output the BASH command directly.
-           - Do NOT use markdown.
+           - First, explain briefly what the command will do.
+           - Then, output the BASH command inside a markdown code block (```bash ... ```).
 
         EXAMPLE FLOW:
         User: "How much RAM is free?"
@@ -193,7 +202,7 @@ You are Privy System Assistant.
             raw_output = response.json()['response'].strip()
             
             # 1. Check for Tool Use ([[CHECK: ...]])
-            check_match = re.search(r"\\\[\[CHECK:\s*(.*?)\\\]\]", raw_output, re.IGNORECASE)
+            check_match = re.search(r"\[\[CHECK:\s*(.*?)\]\]", raw_output, re.IGNORECASE)
             if check_match:
                 cmd_to_run = check_match.group(1).strip()
                 print_styled(f"[Agent] Sprawdzam: {cmd_to_run}...", "yellow")
@@ -215,28 +224,35 @@ You are Privy System Assistant.
 })
                 continue
             
-            final_cmd = raw_output
-            if final_cmd.startswith("```"):
-                lines = final_cmd.splitlines()
-                if len(lines) >= 3:
-                    final_cmd = "\n".join(lines[1:-1])
-                else:
-                    final_cmd = final_cmd.replace("```bash", "").replace("```", "")
-            final_cmd = final_cmd.strip()
+            # Parse Explanation and Command
+            cmd_match = re.search(r"```(?:bash)?\s*(.*?)\s*```", raw_output, re.DOTALL)
+            explanation = ""
+            final_cmd = ""
+
+            if cmd_match:
+                final_cmd = cmd_match.group(1).strip()
+                explanation = raw_output.replace(cmd_match.group(0), "").strip()
+            else:
+                final_cmd = raw_output.strip()
+                # Clean up bare code blocks if regex missed (unlikely but safe)
+                if final_cmd.startswith("```"):
+                    lines = final_cmd.splitlines()
+                    if len(lines) >= 3:
+                        final_cmd = "\n".join(lines[1:-1])
 
             is_command = False
-            if intent == "coder":
+            if intent == "coder" and cmd_match:
                 is_command = True
             else:
                 common_bins = ["ls", "cd", "cat", "grep", "find", "mkdir", "rm", "mv", "cp", "git", "apt", "nano", "vim", "python", "curl", "wget", "ip", "ping", "systemctl", "sudo"]
                 first_word = final_cmd.split()[0] if final_cmd else ""
                 if first_word in common_bins or "&&" in final_cmd or "|" in final_cmd:
                     is_command = True
-                if "\n" in final_cmd and not ("&&" in final_cmd or ";" in final_cmd):
+                if "\n" in final_cmd and not ("&&" in final_cmd or ";" in final_cmd) and not cmd_match:
                      is_command = False
 
             if is_command:
-                return {"type": "suggestion", "content": final_cmd}
+                return {"type": "suggestion", "content": final_cmd, "explanation": explanation}
             else:
                 return {"type": "message", "content": raw_output.replace("[[CHECK:", "").strip()}
 
@@ -279,8 +295,12 @@ def main():
     while True:
         try:
             cwd = os.getcwd()
-            prompt = f"Privy {cwd} > "
-            user_input = input(prompt)
+            if HAS_RICH:
+                prompt_text = f"[bold cyan]Privy[/bold cyan] [bold bright_blue]{cwd}[/bold bright_blue] > "
+                user_input = console.input(prompt_text)
+            else:
+                prompt = f"Privy {cwd} > "
+                user_input = input(prompt)
             
             if not user_input.strip(): continue
             if user_input.lower() in ['exit', 'logout']: break
@@ -289,6 +309,11 @@ def main():
 
             if cmd_root == 'privy-status':
                 status.show_dashboard()
+                continue
+            
+            if cmd_root == 'privy-index':
+                print_styled("[System] Uruchamianie indeksowania bazy wiedzy...", "cyan")
+                rag.index_docs()
                 continue
             
             if cmd_root in NATIVE_COMMANDS:
@@ -311,6 +336,9 @@ def main():
             if result['type'] == 'message':
                 print(result['content'])
             elif result['type'] == 'suggestion':
+                if result.get('explanation'):
+                    print_styled(f"[Wyjaśnienie] {result['explanation']}", "yellow")
+                
                 print(f"Sugestia: {result['content']}")
                 if input("Wykonać? [Y/n]: ").lower() in ['y', '']:
                     os.system(result['content'])

@@ -26,6 +26,7 @@ requires-python = ">=3.8"
 [project.scripts]
 privy = "privy.main:main"
 privypm = "privy.pm:main"
+privy-index = "privy.rag:index_docs"
 
 [tool.setuptools.packages.find]
 where = ["."]
