@@ -47,7 +47,7 @@ def update_config(new_provider, api_key=None):
     with open(config_path, "w") as f:
         f.writelines(lines)
 
-PROVIDER = os.getenv("PRIVY_PROVIDER", "ollama").lower()
+PROVIDER = os.getenv("PRIVY_PROVIDER", "gemini").lower()
 
 # Ollama Settings
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
@@ -158,7 +158,13 @@ def check_ready():
     if PROVIDER == "ollama":
         try:
             r = requests.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=2)
-            return r.status_code == 200
+            if r.status_code == 200:
+                models = [m['name'] for m in r.json().get('models', [])]
+                # Check both main and embedding models
+                main_ok = any(OLLAMA_MODEL in m for m in models)
+                embed_ok = any(OLLAMA_EMBED_MODEL in m for m in models)
+                return main_ok and embed_ok
+            return False
         except:
             return False
     elif PROVIDER == "gemini":

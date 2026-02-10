@@ -75,11 +75,25 @@ def run_setup_wizard():
     console.print("3. [italic grey]OpenAI (Wkrótce...)[/italic grey]")
     console.print("4. [italic grey]Claude (Wkrótce...)[/italic grey]")
     
-    choice = Prompt.ask("Twój wybór", choices=["1", "2"])
+    choice = Prompt.ask("Twój wybór", choices=["1", "2"], default="2")
     
     if choice == "1":
         ai.update_config("ollama")
-        console.print("[green]Skonfigurowano Ollama. Upewnij się, że silnik jest uruchomiony.[/green]")
+        console.print("[yellow]Sprawdzanie modeli Ollama...[/yellow]")
+        
+        # Simple auto-pull for convenience
+        import subprocess
+        try:
+            console.print(f"[cyan]Pobieranie modelu {ai.OLLAMA_MODEL}... (może to zająć chwilę)[/cyan]")
+            subprocess.run(["ollama", "pull", ai.OLLAMA_MODEL], check=True)
+            console.print(f"[cyan]Pobieranie modelu embeddingów {ai.OLLAMA_EMBED_MODEL}...[/cyan]")
+            subprocess.run(["ollama", "pull", ai.OLLAMA_EMBED_MODEL], check=True)
+            console.print("[green]Modele pobrane pomyślnie.[/green]")
+        except Exception as e:
+            console.print(f"[red]Błąd podczas pobierania modeli: {e}[/red]")
+            console.print("[yellow]Upewnij się, że polecenie 'ollama' jest dostępne w systemie.[/yellow]")
+            
+        console.print("[green]Skonfigurowano Ollama.[/green]")
     elif choice == "2":
         key = Prompt.ask("Wprowadź swój Gemini API Key", password=True)
         ai.update_config("gemini", key)
