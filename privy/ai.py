@@ -3,9 +3,9 @@ import requests
 import json
 from dotenv import load_dotenv
 
-# Load .env from current dir or ~/.privy/.env
-load_dotenv()
-load_dotenv(os.path.expanduser("~/.privy/.env"))
+# Load configuration: local .env first, then global ~/.privy/.env (global takes precedence)
+load_dotenv(override=True)
+load_dotenv(os.path.expanduser("~/.privy/.env"), override=True)
 
 def update_config(new_provider, api_key=None):
     """Updates the provider and optional API key both in memory and in the user's .env file."""
