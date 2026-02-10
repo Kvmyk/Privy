@@ -1,51 +1,49 @@
 #!/usr/bin/env python3
 """
 RAG (Retrieval-Augmented Generation) Module for Privy.
-
-This module handles searching local documentation using vector embeddings
-via the local Ollama instance.
+Uses ChromaDB for vector storage and efficient searching.
 """
 
 import os
 import sys
-import json
-import math
-import requests
 import hashlib
+import chromadb
+from chromadb.config import Settings
+
 try:
     from . import ai
 except ImportError:
     import ai
 
 DOCS_DIR = "docs" if os.path.exists("docs") else "/usr/local/share/privy/docs"
-INDEX_FILE = os.path.expanduser("~/.local/share/privy/index.json")
+CHROMA_PATH = os.path.expanduser("~/.local/share/privy/chroma_db")
 
-def get_embedding(text: str) -> list:
-    """Fetches the vector embedding for a given text using the configured AI provider."""
-    return ai.get_embedding(text)
+def get_client():
+    """Returns a persistent ChromaDB client."""
+    return chromadb.PersistentClient(path=CHROMA_PATH)
 
-def cosine_similarity(v1: list, v2: list) -> float:
-    """Calculates the cosine similarity between two vectors."""
-    if not v1 or not v2 or len(v1) != len(v2):
-        return 0.0
-    dot_product = sum(a * b for a, b in zip(v1, v2))
-    magnitude_v1 = math.sqrt(sum(a * a for a in v1))
-    magnitude_v2 = math.sqrt(sum(b * b for b in v2))
-    if magnitude_v1 == 0 or magnitude_v2 == 0:
-        return 0.0
-    return dot_product / (magnitude_v1 * magnitude_v2)
+def get_collection(provider=None):
+    """
+    Returns (or creates) a collection for the current AI provider.
+    Since different providers use different embedding models, we separate them.
+    """
+    client = get_client()
+    prov = provider or ai.PROVIDER
+    collection_name = f"privy_docs_{prov.replace('-', '_')}"
+    return client.get_or_create_collection(name=collection_name, metadata={"hnsw:space": "cosine"})
 
 def index_docs():
-    """Scans DOCS_DIR, chunks files, generates embeddings, and saves to INDEX_FILE."""
+    """Scans DOCS_DIR, chunks files, generates embeddings, and saves to ChromaDB."""
     if not os.path.exists(DOCS_DIR):
         print(f"[RAG] Docs directory {DOCS_DIR} not found.")
         return
 
-    print(f"[RAG] Indexing documentation from {DOCS_DIR}...")
-    index_data = []
+    print(f"[RAG] Indexing documentation from {DOCS_DIR} using {ai.PROVIDER} embeddings...")
+    collection = get_collection()
     
-    os.makedirs(os.path.dirname(INDEX_FILE), exist_ok=True)
-
+    # Simple strategy: Clear and re-index for now to keep it simple
+    # In a larger app, we'd check hashes to only update changed files
+    
     for filename in os.listdir(DOCS_DIR):
         if filename.endswith(".md") or filename.endswith(".txt"):
             filepath = os.path.join(DOCS_DIR, filename)
@@ -55,61 +53,60 @@ def index_docs():
                     
                 chunks = [c.strip() for c in content.split('\n\n') if c.strip()]
                 
+                ids = []
+                vectors = []
+                metadatas = []
+                documents = []
+
                 print(f"  - Processing {filename} ({len(chunks)} chunks)...")
-                for chunk in chunks:
-                    vector = get_embedding(chunk)
+                for i, chunk in enumerate(chunks):
+                    vector = ai.get_embedding(chunk)
                     if vector:
-                        index_data.append({
-                            "source": filename,
-                            "content": chunk,
-                            "vector": vector,
-                            "hash": hashlib.md5(chunk.encode()).hexdigest()
-                        })
+                        chunk_id = hashlib.md5(f"{filename}_{i}".encode()).hexdigest()
+                        ids.append(chunk_id)
+                        vectors.append(vector)
+                        metadatas.append({"source": filename, "chunk": i})
+                        documents.append(chunk)
+
+                if ids:
+                    collection.upsert(
+                        ids=ids,
+                        embeddings=vectors,
+                        metadatas=metadatas,
+                        documents=documents
+                    )
             except Exception as e:
                 print(f"  ! Error processing {filename}: {e}")
-
-    with open(INDEX_FILE, 'w', encoding='utf-8') as f:
-        json.dump(index_data, f)
     
-    print(f"[RAG] Indexing complete. Saved {len(index_data)} chunks to {INDEX_FILE}.")
+    print(f"[RAG] Indexing complete.")
 
 def search_docs(query: str, top_k: int = 3) -> str:
-    """
-    Searches the index for the most relevant document chunks.
-    
-    Args:
-        query (str): The user's question.
-        top_k (int): Number of chunks to return.
-        
-    Returns:
-        str: Context string for the AI.
-    """
-    if not os.path.exists(INDEX_FILE):
-        return "" # No index, no context
-
-    query_vector = get_embedding(query)
-    if not query_vector:
-        return ""
-
+    """Searches ChromaDB for the most relevant document chunks."""
     try:
-        with open(INDEX_FILE, 'r', encoding='utf-8') as f:
-            index_data = json.load(f)
-    except Exception:
+        query_vector = ai.get_embedding(query)
+        if not query_vector:
+            return ""
+
+        collection = get_collection()
+        results = collection.query(
+            query_embeddings=[query_vector],
+            n_results=top_k
+        )
+
+        context_parts = []
+        # Chroma returns results in a nested list format
+        if results['documents'] and results['documents'][0]:
+            for i in range(len(results['documents'][0])):
+                doc = results['documents'][0][i]
+                meta = results['metadatas'][0][i]
+                # Distance in Chroma (cosine) is 1 - similarity, so lower is better
+                # But here we just take what it gives us as they are the top-K
+                context_parts.append(f"--- SOURCE: {meta['source']} ---\n{doc}\n")
+                
+        return "\n".join(context_parts)
+    except Exception as e:
+        # If collection doesn't exist yet or other Chroma error
         return ""
-
-    results = []
-    for item in index_data:
-        score = cosine_similarity(query_vector, item.get('vector', []))
-        results.append((score, item))
-
-    results.sort(key=lambda x: x[0], reverse=True)
-
-    context_parts = []
-    for score, item in results[:top_k]:
-        if score > 0.3:
-            context_parts.append(f"--- SOURCE: {item['source']} (Score: {score:.2f}) ---\n{item['content']}\n")
-            
-    return "\n".join(context_parts)
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:

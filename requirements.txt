@@ -2,3 +2,4 @@ rich
 psutil
 requests
 python-dotenv
+chromadb
