@@ -12,25 +12,17 @@ import json
 import math
 import requests
 import hashlib
+try:
+    from . import ai
+except ImportError:
+    import ai
 
-# Configuration
 DOCS_DIR = "docs" if os.path.exists("docs") else "/usr/local/share/privy/docs"
 INDEX_FILE = os.path.expanduser("~/.local/share/privy/index.json")
-EMBEDDING_MODEL = "nomic-embed-text"
-OLLAMA_EMBED_API = "http://localhost:11434/api/embeddings"
 
 def get_embedding(text: str) -> list:
-    """Fetches the vector embedding for a given text from Ollama."""
-    try:
-        response = requests.post(OLLAMA_EMBED_API, json={
-            "model": EMBEDDING_MODEL,
-            "prompt": text
-        }, timeout=10)
-        if response.status_code == 200:
-            return response.json().get('embedding', [])
-    except Exception as e:
-        print(f"[RAG] Error getting embedding: {e}", file=sys.stderr)
-    return []
+    """Fetches the vector embedding for a given text using the configured AI provider."""
+    return ai.get_embedding(text)
 
 def cosine_similarity(v1: list, v2: list) -> float:
     """Calculates the cosine similarity between two vectors."""
@@ -52,7 +44,6 @@ def index_docs():
     print(f"[RAG] Indexing documentation from {DOCS_DIR}...")
     index_data = []
     
-    # Ensure output directory exists
     os.makedirs(os.path.dirname(INDEX_FILE), exist_ok=True)
 
     for filename in os.listdir(DOCS_DIR):
@@ -62,7 +53,6 @@ def index_docs():
                 with open(filepath, 'r', encoding='utf-8') as f:
                     content = f.read()
                     
-                # Simple Chunking: Split by double newlines (paragraphs)
                 chunks = [c.strip() for c in content.split('\n\n') if c.strip()]
                 
                 print(f"  - Processing {filename} ({len(chunks)} chunks)...")
@@ -112,20 +102,16 @@ def search_docs(query: str, top_k: int = 3) -> str:
         score = cosine_similarity(query_vector, item.get('vector', []))
         results.append((score, item))
 
-    # Sort by score descending
     results.sort(key=lambda x: x[0], reverse=True)
 
-    # Build context string
     context_parts = []
     for score, item in results[:top_k]:
-        # Filter low relevance matches if needed (e.g., score > 0.4)
         if score > 0.3:
             context_parts.append(f"--- SOURCE: {item['source']} (Score: {score:.2f}) ---\n{item['content']}\n")
             
     return "\n".join(context_parts)
 
 if __name__ == "__main__":
-    # CLI utility for testing/indexing
     if len(sys.argv) > 1:
         if sys.argv[1] == "index":
             index_docs()

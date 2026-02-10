@@ -15,35 +15,32 @@ import json
 import time
 import re
 
-# Import local modules
+
 try:
     from . import rag
     from . import status
+    from . import ai
 except ImportError:
-    # Fallback for running directly (development)
     import rag
     import status
+    import ai
 
-# Try importing rich for UI Polish
+
 try:
     from rich.console import Console
     from rich.markdown import Markdown
     from rich.panel import Panel
     from rich.style import Style
     from rich.text import Text
+    from rich.prompt import Prompt, Confirm
     console = Console(force_terminal=True)
     HAS_RICH = True
 except ImportError:
     HAS_RICH = False
 
-# Configuration
-MODEL = "qwen2.5-coder:1.5b"
-EMBEDDING_MODEL = "nomic-embed-text"
-OLLAMA_API = "http://localhost:11434/api/generate"
-OLLAMA_CHECK = "http://localhost:11434/api/tags"
-HISTORY_LIMIT = 5
 
-# Fallback Colors
+
+
 CYAN = "\033[96m"
 GREEN = "\033[92m"
 RED = "\033[91m"
@@ -69,35 +66,36 @@ def print_styled(text: str, style: str = "white"):
         elif style == "yellow": color = YELLOW
         print(f"{color}{text}{RESET}")
 
-def check_ollama_ready() -> bool:
-    """
-    Checks if Ollama is running and if the required model is available.
-    Pulls the model if missing.
+def run_setup_wizard():
+    """Interactive wizard to configure the AI provider."""
+    console.print(Panel("[bold cyan]Privy Setup Wizard[/bold cyan]", border_style="cyan"))
+    console.print("Wybierz dostawcę AI (BYOK):")
+    console.print("1. [bold white]Ollama[/bold white] (Lokalny, darmowy)")
+    console.print("2. [bold white]Google Gemini[/bold white] (Chmura, wymaga klucza)")
+    console.print("3. [italic grey]OpenAI (Wkrótce...)[/italic grey]")
+    console.print("4. [italic grey]Claude (Wkrótce...)[/italic grey]")
+    
+    choice = Prompt.ask("Twój wybór", choices=["1", "2"])
+    
+    if choice == "1":
+        ai.update_config("ollama")
+        console.print("[green]Skonfigurowano Ollama. Upewnij się, że silnik jest uruchomiony.[/green]")
+    elif choice == "2":
+        key = Prompt.ask("Wprowadź swój Gemini API Key", password=True)
+        ai.update_config("gemini", key)
+        console.print("[green]Skonfigurowano Google Gemini.[/green]")
+    
+    return ai.check_ready()
 
-    Returns:
-        bool: True if ready, False otherwise.
-    """
-    print_styled(f"[System] Inicjalizacja silnika AI...", "yellow")
-    max_retries = 30
-    for _ in range(max_retries):
-        try:
-            r = requests.get(OLLAMA_CHECK)
-            if r.status_code == 200:
-                models = [m['name'] for m in r.json()['models']]
-                
-                # Check Main Model
-                if MODEL not in models and f"{MODEL}:latest" not in models:
-                    print_styled(f"[System] Model {MODEL} nie znaleziony. Pobieranie...", "red")
-                    subprocess.run(f"ollama pull {MODEL}", shell=True)
-                
-                # Check Embedding Model
-                if EMBEDDING_MODEL not in models and f"{EMBEDDING_MODEL}:latest" not in models:
-                    print_styled(f"[System] Model embeddingów {EMBEDDING_MODEL} nie znaleziony. Pobieranie...", "red")
-                    subprocess.run(f"ollama pull {EMBEDDING_MODEL}", shell=True)
-                    
-                return True
-        except:
-            time.sleep(2)
+def check_ai_ready() -> bool:
+    """Checks if the configured AI provider is available."""
+    if ai.check_ready():
+        return True
+    
+    print_styled(f"[System] AI ({ai.PROVIDER}) nie jest gotowe.", "yellow")
+    if Confirm.ask("Czy chcesz uruchomić instalator (Setup Wizard)?"):
+        return run_setup_wizard()
+    
     return False
 
 def detect_intent(query: str) -> str:
@@ -133,7 +131,7 @@ def process_ai_interaction(user_query: str, history: list) -> dict:
     """
     intent = detect_intent(user_query)
     
-    # RAG: Search local documentation
+
     local_context = ""
     try:
         rag_text = rag.search_docs(user_query)
@@ -142,14 +140,14 @@ def process_ai_interaction(user_query: str, history: list) -> dict:
     except Exception as e:
         print_styled(f"RAG Error: {e}", "red")
 
-    # Build Context History
+
     context_str = ""
     if history:
         context_str = "PREVIOUS CONTEXT:\n"
         for item in history:
             context_str += f"User: {item['user']}\nLast Command: {item['cmd']}\nResult: {item['status']}\n---\n"
 
-    # Base System Prompts
+
     if intent == "coder":
         system_instruction = f"You are a Coding Assistant. First explain what you are going to do, then generate BASH commands to CREATE files using 'cat << EOF' inside a markdown code block (```bash ... ```).\n{local_context}"
     else:
@@ -181,50 +179,34 @@ You are Privy System Assistant.
         {"role": "user", "content": f"{context_str}\nUser Request: {user_query}"}
     ]
 
-    # Tool Use Loop (Increased to 4 to allow retry)
+
     for _ in range(4):
         try:
-            # Prepare prompt for non-chat API (using raw prompt mode for simplicity with this model)
-            conversation = ""
-            for m in messages:
-                conversation += f"{m['role'].upper()}: {m['content']}\n"
-            conversation += "ASSISTANT:"
-
-            response = requests.post(OLLAMA_API, json={
-                "model": MODEL,
-                "prompt": conversation,
-                "stream": False,
-                "options": {"temperature": 0.1, "num_ctx": 4096}
-            })
-            if response.status_code != 200:
-                return {"type": "error", "content": f"API Error: {response.status_code}"}
+            raw_output = ai.generate(f"{context_str}\nUser Request: {user_query}", system_instruction)
             
-            raw_output = response.json()['response'].strip()
+            if raw_output.startswith("Error:"):
+                return {"type": "error", "content": raw_output}
             
-            # 1. Check for Tool Use ([[CHECK: ...]])
             check_match = re.search(r"\[\[CHECK:\s*(.*?)\]\]", raw_output, re.IGNORECASE)
             if check_match:
                 cmd_to_run = check_match.group(1).strip()
                 print_styled(f"[Agent] Sprawdzam: {cmd_to_run}...", "yellow")
                 
-                # Execute silently
                 try:
-                    # Timeout to prevent hanging
                     proc = subprocess.run(cmd_to_run, shell=True, capture_output=True, text=True, timeout=5)
-                    tool_output = proc.stdout[:2000] + proc.stderr[:500] # Limit output size
+                    tool_output = proc.stdout[:2000] + proc.stderr[:500] 
                     if not tool_output.strip(): tool_output = "(No output)"
                 except subprocess.TimeoutExpired:
                     tool_output = "Error: Command timed out."
                 except Exception as e:
                     tool_output = f"Error executing check: {e}"
 
-                # Add result to conversation and loop again
                 messages.append({"role": "assistant", "content": raw_output})
-                messages.append({"role": "system", "content": f"TOOL OUTPUT for '{cmd_to_run}':\n{tool_output}\n\nNow answer the user's question based on this info."
-})
+                messages.append({"role": "system", "content": f"TOOL OUTPUT for '{cmd_to_run}':\n{tool_output}\n\nNow answer the user's question based on this info."})
+                # Re-build prompt with tool output for the next iteration
+                user_query = f"{user_query}\nTOOL OUTPUT for '{cmd_to_run}':\n{tool_output}"
                 continue
             
-            # Parse Explanation and Command
             cmd_match = re.search(r"```(?:bash)?\s*(.*?)\s*```", raw_output, re.DOTALL)
             explanation = ""
             final_cmd = ""
@@ -234,7 +216,6 @@ You are Privy System Assistant.
                 explanation = raw_output.replace(cmd_match.group(0), "").strip()
             else:
                 final_cmd = raw_output.strip()
-                # Clean up bare code blocks if regex missed (unlikely but safe)
                 if final_cmd.startswith("```"):
                     lines = final_cmd.splitlines()
                     if len(lines) >= 3:
@@ -288,7 +269,7 @@ def main():
     os.system('clear')
     print_banner()
 
-    ai_enabled = check_ollama_ready()
+    ai_enabled = check_ai_ready()
     NATIVE_COMMANDS = ['ls', 'cd', 'pwd', 'cat', 'grep', 'cp', 'mv', 'rm', 'mkdir', 'touch', 'clear', 'exit', 'privypm']
     history = []
 
@@ -301,10 +282,13 @@ def main():
             else:
                 prompt = f"Privy {cwd} > "
                 user_input = input(prompt)
-            
             if not user_input.strip(): continue
             if user_input.lower() in ['exit', 'logout']: break
             
+            if user_input.lower() == 'privy-setup':
+                ai_enabled = run_setup_wizard()
+                continue
+
             cmd_root = user_input.split()[0]
 
             if cmd_root == 'privy-status':

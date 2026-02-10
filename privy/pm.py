@@ -13,23 +13,20 @@ import json
 from rich.console import Console
 from rich.panel import Panel
 from rich.markdown import Markdown
+try:
+    from . import ai
+except ImportError:
+    import ai
 
 console = Console(force_terminal=True)
-MODEL = "qwen2.5-coder:1.5b"
+
 
 def get_cheat_sheet(pkg):
     prompt = f"Provide a concise cheat sheet for the linux command '{pkg}'. List top 5 most useful examples. Output in Markdown. Keep it under 200 words."
-    try:
-        r = requests.post("http://localhost:11434/api/generate", json={
-            "model": MODEL,
-            "prompt": prompt,
-            "stream": False
-        }, timeout=180)
-        if r.status_code == 200:
-            return r.json()['response']
-    except:
-        return "Could not generate cheat sheet (Ollama unreachable)."
-    return "Error generating cheat sheet."
+    res = ai.generate(prompt, "You are a helpful Linux assistant.")
+    if res.startswith("Error:"):
+        return f"Could not generate cheat sheet ({res})."
+    return res
 
 def main():
     if len(sys.argv) < 2:
@@ -39,7 +36,6 @@ def main():
     pkg = sys.argv[1]
     console.print(f"[bold green]PrivyPM:[/bold green] Installing [cyan]{pkg}[/cyan]...")
     
-    # Run apt-get
     res = subprocess.run(["sudo", "apt-get", "install", "-y", pkg])
     
     if res.returncode == 0:
